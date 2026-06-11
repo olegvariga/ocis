@@ -1,0 +1,123 @@
+version: 1
+kind: codex-pipeline
+name: release-candidate
+description: >
+  Validate that custom/master is ready to be tagged, deployed, or used as an
+  internal release candidate.
+
+inputs:
+  required:
+    - release candidate branch, usually custom/master
+    - intended version or label
+  optional:
+    - upstream base commit
+    - deployment notes
+    - known accepted risks
+
+branch_policy:
+  source_branch: custom/master
+  protected_branches:
+    - master
+  no_direct_core_expansion: true
+
+codex_invocation:
+  prompt: >
+    Codex, run .codex/pipelines/release-candidate.yaml for custom/master with
+    version <label>.
+  first_actions:
+    - read .codex/framework.yaml
+    - read this pipeline
+    - read planner, tester, reviewer, and upstream-integrator agent files
+    - inspect git status, branch, and recent merge history
+
+artifacts:
+  run_directory: .codex/runs/<YYYYMMDD-HHMM>-release-<label>
+  create:
+    - release-scope.md
+    - release-risk.md
+    - release-test-report.md
+    - release-decision.md
+
+stages:
+  - id: scope
+    agent: planner
+    purpose: Identify what changed since the last accepted baseline.
+    reads:
+      - git history
+      - custom feature notes
+      - upstream sync notes
+    writes:
+      - .codex/runs/<run>/release-scope.md
+    actions:
+      - list custom feature branches included
+      - list upstream base commit or tag
+      - list migrations, config changes, and operational notes
+    stop_conditions:
+      - baseline is unknown
+    exit_criteria:
+      - release scope is explicit
+
+  - id: risk
+    agent: reviewer
+    purpose: Classify release risk before testing.
+    reads:
+      - release-scope.md
+      - changed files
+      - previous bug reports
+    writes:
+      - .codex/runs/<run>/release-risk.md
+    actions:
+      - identify high-risk custom features
+      - identify core-touching changes
+      - define must-pass checks
+    stop_conditions:
+      - unreviewed core-touching change exists
+    exit_criteria:
+      - must-pass checks are listed
+
+  - id: validation
+    agent: tester
+    purpose: Run release candidate checks.
+    reads:
+      - release-risk.md
+      - .codex/docs/testing-and-bugfix.md
+    writes:
+      - .codex/runs/<run>/release-test-report.md
+    actions:
+      - run must-pass targeted tests
+      - run custom feature regression tests
+      - run smoke checks documented for deployment
+    stop_conditions:
+      - must-pass check fails
+    exit_criteria:
+      - test report supports release decision
+
+  - id: decision
+    agent: planner
+    purpose: Produce a clear ship, hold, or fix decision.
+    reads:
+      - release-scope.md
+      - release-risk.md
+      - release-test-report.md
+    writes:
+      - .codex/runs/<run>/release-decision.md
+    actions:
+      - summarize result
+      - list known accepted risks
+      - list follow-up bugfix branches if needed
+    stop_conditions:
+      - release decision cannot be made from available evidence
+    exit_criteria:
+      - release decision is explicit
+
+gates:
+  required:
+    - release-scope.md completed
+    - release-risk.md completed
+    - release-test-report.md completed
+    - no failed must-pass checks
+    - release-decision.md completed
+
+failure_policy:
+  on_must_pass_failure: hold release and open bugfix pipeline
+  on_unknown_baseline: stop and request baseline

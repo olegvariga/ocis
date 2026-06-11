@@ -1,0 +1,103 @@
+version: 1
+kind: codex-framework
+name: ocis-custom-agent-development
+description: >
+  Agent-driven development framework for custom oCIS features that should remain
+  mergeable with upstream ownCloud oCIS.
+
+repository:
+  fork_remote: origin
+  upstream_remote: upstream
+  upstream_branch: upstream/master
+  clean_mirror_branch: master
+  custom_integration_branch: custom/master
+
+branch_policy:
+  master:
+    purpose: Clean mirror of upstream/master.
+    allow_custom_commits: false
+    update_strategy: fast-forward from upstream/master when possible.
+  custom_master:
+    branch: custom/master
+    purpose: Integration branch for accepted custom features.
+    allow_custom_commits: true
+    merge_source: feature/custom/* and bugfix/custom/*
+  feature_branches:
+    pattern: feature/custom/<slug>
+    base: custom/master
+    merge_target: custom/master
+  bugfix_branches:
+    pattern: bugfix/custom/<slug>
+    base: custom/master
+    merge_target: custom/master
+  upstream_sync_branches:
+    pattern: sync/upstream/<YYYYMMDD>
+    base: custom/master
+    merge_source: upstream/master
+    merge_target: custom/master
+
+core_change_policy:
+  default: avoid-core-changes
+  preferred_order:
+    - configuration
+    - extension point
+    - adapter
+    - separate service
+    - narrow core hook
+    - direct core change
+  direct_core_change_requires:
+    - written justification
+    - touched file list
+    - upstream conflict risk assessment
+    - focused regression tests
+    - reviewer approval
+
+artifact_policy:
+  run_directory: .codex/runs/<YYYYMMDD-HHMM>-<pipeline>-<slug>
+  committed_artifacts:
+    - final feature specs that explain long-lived custom behavior
+    - ADR-style decisions that affect architecture
+    - selected test matrices for maintained custom features
+  uncommitted_artifacts:
+    - transient logs
+    - scratch notes
+    - raw command outputs
+
+pipelines:
+  feature_development: .codex/pipelines/feature-development.yaml
+  bugfix: .codex/pipelines/bugfix.yaml
+  review_gate: .codex/pipelines/review-gate.yaml
+  upstream_sync: .codex/pipelines/upstream-sync.yaml
+  release_candidate: .codex/pipelines/release-candidate.yaml
+
+agents:
+  planner: .codex/agents/planner.md
+  architect: .codex/agents/architect.md
+  builder: .codex/agents/builder.md
+  reviewer: .codex/agents/reviewer.md
+  tester: .codex/agents/tester.md
+  bug_hunter: .codex/agents/bug-hunter.md
+  upstream_integrator: .codex/agents/upstream-integrator.md
+
+quality_gates:
+  plan_required: true
+  core_risk_required: true
+  self_review_required: true
+  tests_required: true
+  bugfix_requires_regression_test: true
+  upstream_sync_requires_conflict_report: true
+
+codex_execution_contract:
+  read_order:
+    - .codex/framework.yaml
+    - selected pipeline YAML
+    - referenced agent role files
+    - referenced templates
+    - relevant source files
+  update_frequency: Explain progress before long-running work and before file edits.
+  final_response:
+    include:
+      - files changed
+      - tests run
+      - known risks
+      - next command or merge step

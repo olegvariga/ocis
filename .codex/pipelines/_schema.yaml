@@ -1,0 +1,36 @@
+version: 1
+kind: codex-pipeline-schema
+required_fields:
+  - version
+  - kind
+  - name
+  - description
+  - inputs
+  - branch_policy
+  - codex_invocation
+  - artifacts
+  - stages
+  - gates
+
+field_contract:
+  version: Integer pipeline format version.
+  kind: Must be codex-pipeline.
+  name: Stable pipeline identifier.
+  description: Human-readable pipeline purpose.
+  inputs: Required user-provided documents, variables, or repository state.
+  branch_policy: Expected branch, base branch, target branch, and protected branches.
+  codex_invocation: How a human should ask Codex to run the pipeline.
+  artifacts: Files Codex should create or update during the run.
+  stages: Ordered agent stages.
+  gates: Mandatory checks before completion.
+  failure_policy: What Codex should do when blocked.
+
+stage_contract:
+  id: Stable stage id.
+  agent: One of the agents registered in .codex/framework.yaml.
+  purpose: Stage objective.
+  reads: Files, templates, or source areas the agent should inspect.
+  writes: Expected artifacts or source changes.
+  actions: Concrete work Codex should perform.
+  stop_conditions: Conditions that require stopping for user input.
+  exit_criteria: Conditions required to move to the next stage.
