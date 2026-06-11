@@ -1,0 +1,162 @@
+version: 1
+kind: codex-pipeline
+name: feature-development
+description: >
+  Plan, implement, review, and test a custom oCIS feature without losing
+  mergeability with upstream.
+
+inputs:
+  required:
+    - completed .codex/templates/feature-spec.md
+    - target custom branch name or feature slug
+  optional:
+    - issue link
+    - design notes
+    - expected upstream conflict areas
+
+branch_policy:
+  start_branch: custom/master
+  work_branch_pattern: feature/custom/<slug>
+  merge_target: custom/master
+  protected_branches:
+    - master
+  forbidden_actions:
+    - custom commits directly on master
+    - direct push to upstream
+
+codex_invocation:
+  prompt: >
+    Codex, run .codex/pipelines/feature-development.yaml using this feature
+    brief: <paste .codex/templates/feature-spec.md>.
+  first_actions:
+    - read .codex/framework.yaml
+    - read this pipeline
+    - read planner, architect, builder, reviewer, and tester agent files
+    - inspect git status and current branch
+
+artifacts:
+  run_directory: .codex/runs/<YYYYMMDD-HHMM>-feature-<slug>
+  create:
+    - plan.md
+    - core-risk.md
+    - implementation-notes.md
+    - review-report.md
+    - test-report.md
+  optional_commit:
+    - stable feature specification when it documents long-lived custom behavior
+
+stages:
+  - id: intake
+    agent: planner
+    purpose: Convert the feature brief into a bounded implementation plan.
+    reads:
+      - .codex/templates/feature-spec.md
+      - .codex/docs/branch-and-upstream-policy.md
+    writes:
+      - .codex/runs/<run>/plan.md
+    actions:
+      - identify user-facing behavior
+      - define non-goals
+      - list source areas likely to be touched
+      - propose smallest useful implementation slice
+    stop_conditions:
+      - feature goal is ambiguous
+      - acceptance criteria are missing for a risky change
+    exit_criteria:
+      - implementation scope fits one branch
+      - acceptance criteria are testable
+
+  - id: architecture-risk
+    agent: architect
+    purpose: Keep the feature outside core unless a narrow core hook is justified.
+    reads:
+      - .codex/docs/core-change-policy.md
+      - plan.md
+      - relevant source files
+    writes:
+      - .codex/runs/<run>/core-risk.md
+    actions:
+      - classify implementation as config, extension, adapter, service, hook, or core change
+      - identify upstream conflict risk by file and package
+      - recommend test coverage based on risk
+    stop_conditions:
+      - direct core change is required but not justified
+      - expected behavior conflicts with upstream semantics
+    exit_criteria:
+      - core risk is documented
+      - allowed implementation boundary is clear
+
+  - id: implementation
+    agent: builder
+    purpose: Implement the approved feature slice.
+    reads:
+      - plan.md
+      - core-risk.md
+      - relevant source files
+    writes:
+      - source changes
+      - .codex/runs/<run>/implementation-notes.md
+    actions:
+      - create or confirm work branch
+      - make scoped source edits
+      - add or update focused tests
+      - avoid unrelated refactors
+    stop_conditions:
+      - required dependency cannot be installed or fetched
+      - source changes expand beyond approved scope
+    exit_criteria:
+      - code compiles or the blocking compile issue is documented
+      - implementation notes list touched files and rationale
+
+  - id: review
+    agent: reviewer
+    purpose: Find regressions, core drift, and missing tests before merge.
+    reads:
+      - git diff against custom/master
+      - .codex/docs/core-change-policy.md
+      - implementation-notes.md
+    writes:
+      - .codex/runs/<run>/review-report.md
+    actions:
+      - review changed files for bugs and merge-risk
+      - verify no custom commits landed on master
+      - check that tests match the risk profile
+    stop_conditions:
+      - high-severity finding is unresolved
+      - feature changes unrelated behavior without approval
+    exit_criteria:
+      - review report has no unresolved blocking findings
+
+  - id: test
+    agent: tester
+    purpose: Run focused tests and define regression coverage.
+    reads:
+      - .codex/docs/testing-and-bugfix.md
+      - review-report.md
+      - changed source files
+    writes:
+      - .codex/runs/<run>/test-report.md
+    actions:
+      - choose smallest meaningful test set
+      - run targeted tests first
+      - run broader package tests when shared behavior changed
+      - record skipped tests and reasons
+    stop_conditions:
+      - tests fail for unknown reasons
+      - no meaningful test exists for changed behavior
+    exit_criteria:
+      - test report lists commands, results, and remaining risk
+
+gates:
+  required:
+    - clean git status except intended changes
+    - no custom commit on master
+    - core-risk.md completed
+    - review-report.md completed
+    - test-report.md completed
+    - blocking review findings resolved
+
+failure_policy:
+  on_blocked_dependency: stop and report exact command and error
+  on_test_failure: enter .codex/pipelines/bugfix.yaml if failure is caused by the feature
+  on_core_policy_violation: stop before editing further

@@ -1,0 +1,145 @@
+version: 1
+kind: codex-pipeline
+name: bugfix
+description: >
+  Reproduce, diagnose, fix, and regression-test a bug in custom oCIS work.
+
+inputs:
+  required:
+    - completed .codex/templates/bug-report.md
+    - affected branch or commit
+  optional:
+    - failing command output
+    - user reproduction steps
+    - suspected feature slug
+
+branch_policy:
+  start_branch: custom/master
+  work_branch_pattern: bugfix/custom/<slug>
+  merge_target: custom/master
+  protected_branches:
+    - master
+
+codex_invocation:
+  prompt: >
+    Codex, run .codex/pipelines/bugfix.yaml using this bug report:
+    <paste .codex/templates/bug-report.md>.
+  first_actions:
+    - read .codex/framework.yaml
+    - read this pipeline
+    - read bug-hunter, builder, tester, reviewer, and architect agent files
+    - inspect git status and recent custom commits
+
+artifacts:
+  run_directory: .codex/runs/<YYYYMMDD-HHMM>-bugfix-<slug>
+  create:
+    - reproduction.md
+    - diagnosis.md
+    - fix-notes.md
+    - regression-test.md
+    - review-report.md
+
+stages:
+  - id: reproduce
+    agent: bug_hunter
+    purpose: Establish a reliable reproduction or define why it cannot be reproduced.
+    reads:
+      - .codex/templates/bug-report.md
+      - relevant source and tests
+    writes:
+      - .codex/runs/<run>/reproduction.md
+    actions:
+      - translate symptoms into exact steps
+      - run the smallest reproduction command
+      - record expected and actual behavior
+    stop_conditions:
+      - reproduction requires missing credentials or unavailable external systems
+    exit_criteria:
+      - bug is reproduced or non-reproducibility is documented with evidence
+
+  - id: diagnose
+    agent: bug_hunter
+    purpose: Identify the likely root cause before editing code.
+    reads:
+      - reproduction.md
+      - relevant source files
+      - recent custom diffs
+    writes:
+      - .codex/runs/<run>/diagnosis.md
+    actions:
+      - map failure to owning feature or upstream behavior
+      - identify minimal fix location
+      - decide if the issue is custom code, upstream code, config, or test-only
+    stop_conditions:
+      - root cause points to upstream regression outside custom scope
+    exit_criteria:
+      - diagnosis names the failing behavior and proposed fix
+
+  - id: fix
+    agent: builder
+    purpose: Apply the smallest safe fix.
+    reads:
+      - diagnosis.md
+      - .codex/docs/core-change-policy.md
+    writes:
+      - source changes
+      - .codex/runs/<run>/fix-notes.md
+    actions:
+      - edit only the affected area
+      - add a regression test when feasible
+      - avoid broad cleanup
+    stop_conditions:
+      - fix requires direct core change without policy approval
+    exit_criteria:
+      - fix is limited to diagnosed behavior
+
+  - id: regression-test
+    agent: tester
+    purpose: Prove the bug is fixed and guarded.
+    reads:
+      - reproduction.md
+      - fix-notes.md
+      - .codex/docs/testing-and-bugfix.md
+    writes:
+      - .codex/runs/<run>/regression-test.md
+    actions:
+      - rerun reproduction
+      - run new or existing regression test
+      - run adjacent package tests when shared behavior changed
+    stop_conditions:
+      - bug still reproduces
+      - regression test cannot be written and no manual proof exists
+    exit_criteria:
+      - failing case now passes
+      - regression coverage is documented
+
+  - id: review
+    agent: reviewer
+    purpose: Confirm the fix does not mask or broaden the bug.
+    reads:
+      - git diff against custom/master
+      - diagnosis.md
+      - regression-test.md
+    writes:
+      - .codex/runs/<run>/review-report.md
+    actions:
+      - check for overbroad changes
+      - verify the regression test would fail before the fix
+      - confirm no unrelated files changed
+    stop_conditions:
+      - blocking review finding remains
+    exit_criteria:
+      - bugfix is ready for merge into custom/master
+
+gates:
+  required:
+    - reproduction.md completed
+    - diagnosis.md completed
+    - regression-test.md completed
+    - no unrelated refactor
+    - blocking review findings resolved
+
+failure_policy:
+  on_non_reproducible: stop with evidence and suggested next data
+  on_upstream_bug: document upstream issue and avoid custom workaround unless approved
+  on_test_failure: keep branch open and report failed command

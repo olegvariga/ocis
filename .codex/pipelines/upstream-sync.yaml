@@ -1,0 +1,154 @@
+version: 1
+kind: codex-pipeline
+name: upstream-sync
+description: >
+  Merge fresh upstream/master into the custom integration branch while preserving
+  custom features.
+
+inputs:
+  required:
+    - target custom integration branch, usually custom/master
+  optional:
+    - known fragile features
+    - previous conflict report
+    - release tag target
+
+branch_policy:
+  clean_mirror_branch: master
+  upstream_branch: upstream/master
+  custom_integration_branch: custom/master
+  work_branch_pattern: sync/upstream/<YYYYMMDD>
+  protected_branches:
+    - master
+
+codex_invocation:
+  prompt: >
+    Codex, run .codex/pipelines/upstream-sync.yaml for custom/master.
+    Preserve custom features and report conflicts before resolving risky ones.
+  first_actions:
+    - read .codex/framework.yaml
+    - read this pipeline
+    - read upstream-integrator, architect, reviewer, and tester agent files
+    - inspect git status, remotes, and branch divergence
+
+artifacts:
+  run_directory: .codex/runs/<YYYYMMDD-HHMM>-upstream-sync
+  create:
+    - divergence.md
+    - conflict-report.md
+    - resolution-notes.md
+    - upstream-risk-review.md
+    - sync-test-report.md
+
+stages:
+  - id: prepare
+    agent: upstream_integrator
+    purpose: Update remote refs and establish divergence.
+    reads:
+      - git remotes
+      - upstream/master
+      - origin/master
+      - custom/master
+    writes:
+      - .codex/runs/<run>/divergence.md
+    actions:
+      - verify working tree is clean
+      - fetch origin and upstream
+      - compare upstream/master, origin/master, and custom/master
+      - confirm master has no custom commits
+    stop_conditions:
+      - working tree is dirty
+      - master diverged from upstream with custom commits
+    exit_criteria:
+      - divergence report is complete
+
+  - id: merge-upstream
+    agent: upstream_integrator
+    purpose: Merge upstream into a sync branch based on custom/master.
+    reads:
+      - divergence.md
+      - custom/master
+      - upstream/master
+    writes:
+      - merge result
+      - .codex/runs/<run>/conflict-report.md
+    actions:
+      - create sync/upstream/<YYYYMMDD>
+      - merge upstream/master into the sync branch
+      - list conflicts by file and owning feature
+      - use git rerere where available
+    stop_conditions:
+      - conflict changes custom behavior and requires product decision
+      - conflict involves unknown security-sensitive behavior
+    exit_criteria:
+      - merge is clean or conflicts are fully documented
+
+  - id: resolve
+    agent: upstream_integrator
+    purpose: Resolve safe conflicts while preserving custom intent.
+    reads:
+      - conflict-report.md
+      - .codex/docs/core-change-policy.md
+      - relevant feature notes if available
+    writes:
+      - conflict resolutions
+      - .codex/runs/<run>/resolution-notes.md
+    actions:
+      - resolve mechanical conflicts
+      - preserve upstream changes unless they break documented custom behavior
+      - mark high-risk conflicts for user decision
+    stop_conditions:
+      - no documented custom behavior explains which side should win
+    exit_criteria:
+      - git reports no unresolved conflicts
+      - resolution notes explain each non-trivial decision
+
+  - id: risk-review
+    agent: reviewer
+    purpose: Review the sync branch for accidental feature loss.
+    reads:
+      - merge diff
+      - resolution-notes.md
+      - known custom feature list
+    writes:
+      - .codex/runs/<run>/upstream-risk-review.md
+    actions:
+      - inspect conflict resolutions
+      - compare custom feature files before and after merge
+      - flag dropped behavior
+    stop_conditions:
+      - custom feature appears removed or disabled unintentionally
+    exit_criteria:
+      - no blocking sync findings remain
+
+  - id: sync-tests
+    agent: tester
+    purpose: Run tests that cover changed upstream and custom behavior.
+    reads:
+      - conflict-report.md
+      - upstream-risk-review.md
+      - changed files
+    writes:
+      - .codex/runs/<run>/sync-test-report.md
+    actions:
+      - run targeted tests for conflict areas
+      - run custom feature regression tests
+      - record skipped broad tests and why
+    stop_conditions:
+      - targeted tests fail
+      - custom behavior cannot be verified
+    exit_criteria:
+      - sync branch is ready to merge into custom/master
+
+gates:
+  required:
+    - master has no custom commits
+    - conflict-report.md completed
+    - all conflicts resolved or explicitly blocked
+    - upstream-risk-review.md completed
+    - sync-test-report.md completed
+
+failure_policy:
+  on_dirty_tree: stop before fetching or merging
+  on_risky_conflict: stop and ask for product decision
+  on_test_failure: switch to bugfix pipeline on sync branch

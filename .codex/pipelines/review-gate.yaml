@@ -1,0 +1,102 @@
+version: 1
+kind: codex-pipeline
+name: review-gate
+description: >
+  Independent Codex review gate before a custom branch is merged into
+  custom/master.
+
+inputs:
+  required:
+    - source branch
+    - target branch, usually custom/master
+  optional:
+    - feature plan path
+    - test report path
+    - known risk notes
+
+branch_policy:
+  compare_against: custom/master
+  protected_branches:
+    - master
+  no_writes_by_default: true
+
+codex_invocation:
+  prompt: >
+    Codex, run .codex/pipelines/review-gate.yaml for branch <branch> against
+    custom/master. Review only; do not edit unless I approve fixes.
+  first_actions:
+    - read .codex/framework.yaml
+    - read this pipeline
+    - read reviewer, architect, and tester agent files
+    - inspect git status and diff against target branch
+
+artifacts:
+  run_directory: .codex/runs/<YYYYMMDD-HHMM>-review-<slug>
+  create:
+    - review-report.md
+    - core-drift-check.md
+    - test-gap-check.md
+
+stages:
+  - id: diff-orientation
+    agent: reviewer
+    purpose: Understand the branch before making findings.
+    reads:
+      - git diff against target branch
+      - commit history unique to source branch
+    writes:
+      - .codex/runs/<run>/review-report.md
+    actions:
+      - summarize changed areas
+      - identify intended behavior
+      - identify likely blast radius
+    stop_conditions:
+      - branch has unrelated mixed work that prevents meaningful review
+    exit_criteria:
+      - review scope is clear
+
+  - id: core-drift
+    agent: architect
+    purpose: Detect avoidable divergence from upstream core.
+    reads:
+      - .codex/docs/core-change-policy.md
+      - changed files
+    writes:
+      - .codex/runs/<run>/core-drift-check.md
+    actions:
+      - flag direct core edits
+      - verify core edits have justification
+      - recommend extraction when feasible
+    stop_conditions:
+      - direct core edit lacks justification
+    exit_criteria:
+      - core drift risk is classified
+
+  - id: test-gaps
+    agent: tester
+    purpose: Check whether changed behavior has meaningful coverage.
+    reads:
+      - changed files
+      - existing tests
+      - any supplied test report
+    writes:
+      - .codex/runs/<run>/test-gap-check.md
+    actions:
+      - identify missing regression tests
+      - recommend exact targeted commands
+      - classify remaining risk
+    stop_conditions:
+      - critical behavior lacks any test or manual verification path
+    exit_criteria:
+      - test gaps are explicit
+
+gates:
+  required:
+    - no unresolved P0 or P1 findings
+    - no unjustified direct core edits
+    - test gaps accepted or fixed
+    - master remains clean
+
+failure_policy:
+  on_blocking_finding: stop and report findings first
+  on_requested_fix: switch to feature-development or bugfix pipeline as appropriate
